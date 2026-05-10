@@ -209,6 +209,7 @@ def test_cmd_delta_outputs_topic_delta(temp_db, capsys):
 
     args = Mock()
     args.topic = "Test Topic"
+    args.emit = "json"
 
     watchlist.cmd_delta(args)
 
@@ -227,9 +228,49 @@ def test_cmd_delta_unknown_topic_exits(temp_db):
     """Test delta for an unknown topic exits with an error."""
     args = Mock()
     args.topic = "Missing Topic"
+    args.emit = "json"
 
     with pytest.raises(SystemExit):
         watchlist.cmd_delta(args)
+
+
+def test_cmd_delta_compact_output(temp_db, capsys):
+    """Test printing a human-readable watchlist delta brief."""
+    topic = store.add_topic("Test Topic")
+    previous_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(previous_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+        }
+    ])
+    current_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(current_run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+        },
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.emit = "compact"
+
+    watchlist.cmd_delta(args)
+
+    output = capsys.readouterr().out
+    assert "# Watchlist delta: Test Topic" in output
+    assert f"- Current run: {current_run_id}" in output
+    assert f"- Previous run: {previous_run_id}" in output
+    assert "- New: 1" in output
+    assert "- Continued: 0" in output
+    assert "- Dropped: 1" in output
+    assert "## What changed" in output
+    assert "New" in output
 
 
 # === Tests for cmd_config() ===

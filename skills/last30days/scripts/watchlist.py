@@ -116,7 +116,68 @@ def cmd_delta(args):
     if not topic:
         print(json.dumps({"error": f'Topic not found: "{args.topic}"'}))
         sys.exit(1)
-    print(json.dumps(store.compute_topic_delta(topic["id"]), default=str))
+    delta = store.compute_topic_delta(topic["id"])
+    emit = getattr(args, "emit", "json")
+    if emit == "json":
+        print(json.dumps(delta, default=str))
+        return
+    if emit in {"compact", "md"}:
+        print(_format_delta_compact(delta))
+        return
+    raise SystemExit(f"Unsupported delta emit mode: {emit}")
+
+
+def _format_delta_compact(delta: dict) -> str:
+    if delta.get("status") != "ok":
+        return (
+            f"# Watchlist delta: {delta.get('topic', 'unknown')}\n\n"
+            f"Status: {delta.get('status')}\n\n"
+            f"{delta.get('message', '')}"
+        ).strip()
+
+    lines = [
+        f"# Watchlist delta: {delta['topic']}",
+        "",
+        f"- Current run: {delta['current_run_id']}",
+        f"- Previous run: {delta['previous_run_id']}",
+        f"- New: {delta['new']}",
+        f"- Continued: {delta['continued']}",
+        f"- Dropped: {delta['dropped']}",
+        "",
+        "## Source movement",
+    ]
+    sources = delta.get("sources") or {}
+    if sources:
+        for source, counts in sources.items():
+            lines.append(
+                f"- {source}: +{counts.get('new', 0)} new, "
+                f"{counts.get('continued', 0)} continued, "
+                f"-{counts.get('dropped', 0)} dropped"
+            )
+    else:
+        lines.append("- No source movement.")
+
+    lines.extend(["", "## What changed"])
+    new_findings = (delta.get("findings") or {}).get("new") or []
+    if new_findings:
+        for finding in new_findings[:10]:
+            title = finding.get("source_title") or finding.get("source_url") or "Untitled"
+            source = finding.get("source") or "unknown"
+            url = finding.get("source_url") or ""
+            lines.append(f"- [{source}] {title} — {url}".rstrip())
+    else:
+        lines.append("- No new findings in the latest run.")
+
+    dropped_findings = (delta.get("findings") or {}).get("dropped") or []
+    if dropped_findings:
+        lines.extend(["", "## Dropped since previous run"])
+        for finding in dropped_findings[:10]:
+            title = finding.get("source_title") or finding.get("source_url") or "Untitled"
+            source = finding.get("source") or "unknown"
+            url = finding.get("source_url") or ""
+            lines.append(f"- [{source}] {title} — {url}".rstrip())
+
+    return "\n".join(lines)
 
 
 def cmd_run_one(args):
@@ -262,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     delta = sub.add_parser("delta")
     delta.add_argument("topic")
+    delta.add_argument("--emit", choices=["json", "compact", "md"], default="json")
     delta.set_defaults(func=cmd_delta)
 
     run_one = sub.add_parser("run-one")
