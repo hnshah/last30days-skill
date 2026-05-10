@@ -217,6 +217,70 @@ def _format_delta_compact(delta: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_dossier(args):
+    topic = store.get_topic(args.topic)
+    if not topic:
+        print(json.dumps({"error": f'Topic not found: "{args.topic}"'}))
+        sys.exit(1)
+    dossier = store.build_topic_dossier(topic["id"])
+    emit = getattr(args, "emit", "json")
+    if emit == "json":
+        print(json.dumps(dossier, default=str))
+        return
+    if emit in {"compact", "md"}:
+        print(_format_dossier_compact(dossier))
+        return
+    raise SystemExit(f"Unsupported dossier emit mode: {emit}")
+
+
+def _format_dossier_compact(dossier: dict) -> str:
+    if dossier.get("status") != "ok":
+        return (
+            f"# Watchlist dossier: {dossier.get('topic', 'unknown')}\n\n"
+            f"Status: {dossier.get('status')}\n\n"
+            f"{dossier.get('message', '')}"
+        ).strip()
+
+    lines = [
+        f"# Watchlist dossier: {dossier['topic']}",
+        "",
+        f"- Findings tracked: {dossier.get('finding_count', 0)}",
+    ]
+
+    delta = dossier.get("delta") or {}
+    if delta.get("status") == "ok":
+        lines.extend([
+            f"- Latest delta: {delta.get('new', 0)} new, "
+            f"{delta.get('continued', 0)} continued, {delta.get('dropped', 0)} dropped",
+        ])
+    else:
+        lines.append(f"- Latest delta: {delta.get('status', 'unavailable')}")
+
+    lines.extend(["", "## Recent runs"])
+    recent_runs = dossier.get("recent_runs") or []
+    if recent_runs:
+        for run in recent_runs[:10]:
+            lines.append(
+                f"- run {run['id']}: {run.get('status')} at {run.get('run_date')} "
+                f"({run.get('findings_new', 0)} new, {run.get('findings_updated', 0)} updated)"
+            )
+    else:
+        lines.append("- No runs yet.")
+
+    lines.extend(["", "## Recent findings"])
+    recent_findings = dossier.get("recent_findings") or []
+    if recent_findings:
+        for finding in recent_findings[:10]:
+            title = finding.get("source_title") or finding.get("source_url") or "Untitled"
+            source = finding.get("source") or "unknown"
+            url = finding.get("source_url") or ""
+            lines.append(f"- [{source}] {title} — {url}".rstrip())
+    else:
+        lines.append("- No findings yet.")
+
+    return "\n".join(lines)
+
+
 def cmd_run_one(args):
     topic = store.get_topic(args.topic)
     if not topic:
@@ -365,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     delta.add_argument("topic")
     delta.add_argument("--emit", choices=["json", "compact", "md"], default="json")
     delta.set_defaults(func=cmd_delta)
+
+    dossier = sub.add_parser("dossier")
+    dossier.add_argument("topic")
+    dossier.add_argument("--emit", choices=["json", "compact", "md"], default="json")
+    dossier.set_defaults(func=cmd_dossier)
 
     run_one = sub.add_parser("run-one")
     run_one.add_argument("topic")

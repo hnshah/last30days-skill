@@ -338,6 +338,60 @@ def test_cmd_delta_compact_output(temp_db, capsys):
     assert "New" in output
 
 
+# === Tests for cmd_dossier() ===
+
+def test_cmd_dossier_outputs_json(temp_db, capsys):
+    """Test printing a topic dossier as JSON."""
+    topic = store.add_topic("Test Topic")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+        }
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.emit = "json"
+
+    watchlist.cmd_dossier(args)
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["topic"] == "Test Topic"
+    assert output["finding_count"] == 1
+    assert output["recent_runs"][0]["id"] == run_id
+
+
+def test_cmd_dossier_compact_output(temp_db, capsys):
+    """Test printing a human-readable topic dossier."""
+    topic = store.add_topic("Test Topic")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+        }
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.emit = "md"
+
+    watchlist.cmd_dossier(args)
+
+    output = capsys.readouterr().out
+    assert "# Watchlist dossier: Test Topic" in output
+    assert "## Recent runs" in output
+    assert f"run {run_id}" in output
+    assert "## Recent findings" in output
+    assert "New" in output
+
+
 # === Tests for cmd_config() ===
 
 def test_cmd_config_delivery(temp_db, capsys):

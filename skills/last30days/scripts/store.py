@@ -682,6 +682,48 @@ def compute_topic_delta(topic_id: int) -> Dict[str, Any]:
     }
 
 
+def build_topic_dossier(
+    topic_id: int,
+    *,
+    run_limit: int = 10,
+    finding_limit: int = 25,
+) -> Dict[str, Any]:
+    """Build a deterministic dossier for a watched topic."""
+    topic = _get_topic_by_id(topic_id)
+    if not topic:
+        return {
+            "topic": str(topic_id),
+            "status": "not_found",
+            "message": "Topic not found.",
+        }
+    recent_runs = _get_recent_runs(topic_id, run_limit)
+    recent_findings = get_new_findings(topic_id)[:finding_limit]
+    return {
+        "topic": topic["name"],
+        "status": "ok",
+        "topic_record": topic,
+        "delta": compute_topic_delta(topic_id),
+        "recent_runs": recent_runs,
+        "finding_count": len(get_new_findings(topic_id)),
+        "recent_findings": recent_findings,
+    }
+
+
+def _get_recent_runs(topic_id: int, limit: int) -> List[Dict[str, Any]]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM research_runs
+               WHERE topic_id = ?
+               ORDER BY datetime(run_date) DESC, id DESC
+               LIMIT ?""",
+            (topic_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def _get_topic_by_id(topic_id: int) -> Optional[Dict[str, Any]]:
     conn = _connect()
     try:

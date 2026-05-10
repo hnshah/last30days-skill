@@ -830,6 +830,49 @@ def test_get_due_topics_skips_running_topics(temp_db):
     assert due == []
 
 
+# === Tests for topic dossiers ===
+
+def test_build_topic_dossier_includes_delta_runs_and_recent_findings(temp_db):
+    """Test building a deterministic topic dossier from watchlist history."""
+    topic = store.add_topic("Test Topic")
+    first_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(first_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+        }
+    ])
+    second_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(second_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+        },
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+        },
+    ])
+
+    dossier = store.build_topic_dossier(topic["id"], run_limit=5, finding_limit=10)
+
+    assert dossier["topic"] == "Test Topic"
+    assert dossier["status"] == "ok"
+    assert dossier["delta"]["new"] == 1
+    assert [run["id"] for run in dossier["recent_runs"]] == [second_run_id, first_run_id]
+    assert dossier["finding_count"] == 2
+    assert [finding["source_url"] for finding in dossier["recent_findings"]] == [
+        "https://github.com/example/new",
+        "https://reddit.com/continued",
+    ]
+
+
 # === Tests for get_new_findings() ===
 
 def test_get_new_findings(temp_db, sample_report):
