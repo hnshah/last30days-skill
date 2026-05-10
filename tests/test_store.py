@@ -873,6 +873,80 @@ def test_build_topic_dossier_includes_delta_runs_and_recent_findings(temp_db):
     ]
 
 
+# === Tests for watchlist escalation scoring ===
+
+def test_score_topic_delta_escalates_meaningful_new_findings():
+    """Test that multiple new findings produce an escalation recommendation."""
+    delta = {
+        "status": "ok",
+        "new": 4,
+        "continued": 1,
+        "dropped": 0,
+        "sources": {
+            "github": {"new": 2, "continued": 0, "dropped": 0},
+            "reddit": {"new": 2, "continued": 1, "dropped": 0},
+        },
+    }
+
+    escalation = store.score_topic_delta(delta)
+
+    assert escalation["decision"] == "escalate"
+    assert escalation["score"] >= 0.7
+    assert "4 new findings" in escalation["reasons"]
+    assert "2 sources with new findings" in escalation["reasons"]
+
+
+def test_score_topic_delta_keeps_routine_delta_quiet():
+    """Test that low-signal deltas stay quiet by default."""
+    delta = {
+        "status": "ok",
+        "new": 0,
+        "continued": 3,
+        "dropped": 0,
+        "sources": {"reddit": {"new": 0, "continued": 3, "dropped": 0}},
+    }
+
+    escalation = store.score_topic_delta(delta)
+
+    assert escalation["decision"] == "quiet"
+    assert escalation["score"] < 0.7
+    assert escalation["reasons"] == ["No new or dropped findings."]
+
+
+def test_build_topic_dossier_includes_escalation(temp_db):
+    """Test dossiers include a deterministic escalation recommendation."""
+    topic = store.add_topic("Test Topic")
+    first_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(first_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/old",
+            "source_title": "Old",
+            "content": "Old item",
+        }
+    ])
+    second_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(second_run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new-1",
+            "source_title": "New 1",
+            "content": "New item",
+        },
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/new-2",
+            "source_title": "New 2",
+            "content": "New item",
+        },
+    ])
+
+    dossier = store.build_topic_dossier(topic["id"])
+
+    assert dossier["escalation"]["decision"] == "escalate"
+    assert dossier["escalation"]["recommended_action"] == "review_delta"
+
+
 # === Tests for get_new_findings() ===
 
 def test_get_new_findings(temp_db, sample_report):

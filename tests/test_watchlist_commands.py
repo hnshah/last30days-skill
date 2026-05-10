@@ -392,6 +392,46 @@ def test_cmd_dossier_compact_output(temp_db, capsys):
     assert "New" in output
 
 
+def test_cmd_dossier_compact_output_includes_escalation(temp_db, capsys):
+    """Test dossier briefs include quiet/escalate recommendation."""
+    topic = store.add_topic("Test Topic")
+    first_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(first_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/old",
+            "source_title": "Old",
+            "content": "Old item",
+        }
+    ])
+    second_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(second_run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new-1",
+            "source_title": "New 1",
+            "content": "New item",
+        },
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/new-2",
+            "source_title": "New 2",
+            "content": "New item",
+        },
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.emit = "compact"
+
+    watchlist.cmd_dossier(args)
+
+    output = capsys.readouterr().out
+    assert "## Escalation" in output
+    assert "- Decision: escalate" in output
+    assert "- Recommended action: review_delta" in output
+
+
 # === Tests for cmd_config() ===
 
 def test_cmd_config_delivery(temp_db, capsys):

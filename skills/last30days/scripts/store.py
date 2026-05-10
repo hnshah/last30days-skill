@@ -698,14 +698,64 @@ def build_topic_dossier(
         }
     recent_runs = _get_recent_runs(topic_id, run_limit)
     recent_findings = get_new_findings(topic_id)[:finding_limit]
+    delta = compute_topic_delta(topic_id)
     return {
         "topic": topic["name"],
         "status": "ok",
         "topic_record": topic,
-        "delta": compute_topic_delta(topic_id),
+        "delta": delta,
+        "escalation": score_topic_delta(delta),
         "recent_runs": recent_runs,
         "finding_count": len(get_new_findings(topic_id)),
         "recent_findings": recent_findings,
+    }
+
+
+def score_topic_delta(
+    delta: Dict[str, Any],
+    *,
+    threshold: float = 0.7,
+) -> Dict[str, Any]:
+    """Return a deterministic quiet/escalate recommendation for a delta."""
+    if delta.get("status") != "ok":
+        return {
+            "decision": "quiet",
+            "score": 0.0,
+            "threshold": threshold,
+            "recommended_action": "none",
+            "reasons": [delta.get("message") or f"Delta status: {delta.get('status')}"]
+        }
+
+    new_count = int(delta.get("new") or 0)
+    dropped_count = int(delta.get("dropped") or 0)
+    sources = delta.get("sources") or {}
+    sources_with_new = sorted(
+        source for source, counts in sources.items()
+        if int(counts.get("new") or 0) > 0
+    )
+
+    score = 0.0
+    reasons: List[str] = []
+    if new_count:
+        score += min(0.6, new_count * 0.2)
+        reasons.append(f"{new_count} new findings")
+    if len(sources_with_new) > 1:
+        score += min(0.3, len(sources_with_new) * 0.15)
+        reasons.append(f"{len(sources_with_new)} sources with new findings")
+    if dropped_count >= 3:
+        score += 0.15
+        reasons.append(f"{dropped_count} dropped findings")
+    if not reasons:
+        reasons.append("No new or dropped findings.")
+
+    score = min(1.0, round(score, 2))
+    decision = "escalate" if score >= threshold else "quiet"
+    return {
+        "decision": decision,
+        "score": score,
+        "threshold": threshold,
+        "recommended_action": "review_delta" if decision == "escalate" else "none",
+        "reasons": reasons,
     }
 
 

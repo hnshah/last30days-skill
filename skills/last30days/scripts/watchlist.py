@@ -256,6 +256,18 @@ def _format_dossier_compact(dossier: dict) -> str:
     else:
         lines.append(f"- Latest delta: {delta.get('status', 'unavailable')}")
 
+    escalation = dossier.get("escalation") or {}
+    lines.extend([
+        "",
+        "## Escalation",
+        f"- Decision: {escalation.get('decision', 'quiet')}",
+        f"- Score: {escalation.get('score', 0.0)} / {escalation.get('threshold', 0.7)}",
+        f"- Recommended action: {escalation.get('recommended_action', 'none')}",
+    ])
+    reasons = escalation.get("reasons") or []
+    if reasons:
+        lines.append("- Reasons: " + "; ".join(reasons))
+
     lines.extend(["", "## Recent runs"])
     recent_runs = dossier.get("recent_runs") or []
     if recent_runs:
