@@ -127,6 +127,43 @@ def cmd_delta(args):
     raise SystemExit(f"Unsupported delta emit mode: {emit}")
 
 
+def cmd_due(args):
+    del args
+    topics = store.get_due_topics()
+    print(json.dumps({
+        "action": "due",
+        "count": len(topics),
+        "topics": topics,
+    }, default=str))
+
+
+def cmd_run_due(args):
+    del args
+    topics = store.get_due_topics()
+    budget_limit = float(store.get_setting("daily_budget", "5.00"))
+    results = []
+    ran = 0
+    for topic in topics:
+        if store.get_daily_cost() >= budget_limit:
+            results.append({
+                "topic": topic["name"],
+                "status": "skipped",
+                "reason": f"Budget exceeded: ${store.get_daily_cost():.2f}/${budget_limit:.2f}",
+            })
+            continue
+        results.append(_run_topic(topic))
+        ran += 1
+
+    print(json.dumps({
+        "action": "run_due",
+        "due": len(topics),
+        "ran": ran,
+        "results": results,
+        "budget_used": store.get_daily_cost(),
+        "budget_limit": budget_limit,
+    }, default=str))
+
+
 def _format_delta_compact(delta: dict) -> str:
     if delta.get("status") != "ok":
         return (
@@ -321,6 +358,9 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = sub.add_parser("list")
     list_parser.set_defaults(func=cmd_list)
 
+    due = sub.add_parser("due")
+    due.set_defaults(func=cmd_due)
+
     delta = sub.add_parser("delta")
     delta.add_argument("topic")
     delta.add_argument("--emit", choices=["json", "compact", "md"], default="json")
@@ -332,6 +372,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_all = sub.add_parser("run-all")
     run_all.set_defaults(func=cmd_run_all)
+
+    run_due = sub.add_parser("run-due")
+    run_due.set_defaults(func=cmd_run_due)
 
     config = sub.add_parser("config")
     config.add_argument("key", choices=["delivery", "budget"])

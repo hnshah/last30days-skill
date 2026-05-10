@@ -177,6 +177,71 @@ def test_cmd_list_with_topics(temp_db, capsys):
     assert topic_names == {"Topic 1", "Topic 2", "Topic 3"}
 
 
+# === Tests for cmd_due() / cmd_run_due() ===
+
+def test_cmd_due_lists_due_topics(temp_db, capsys):
+    """Test listing topics that should be run now."""
+    store.add_topic("Due Topic")
+
+    args = Mock()
+
+    watchlist.cmd_due(args)
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["action"] == "due"
+    assert output["count"] == 1
+    assert output["topics"][0]["name"] == "Due Topic"
+
+
+@patch('watchlist._run_topic')
+def test_cmd_run_due_runs_only_due_topics(mock_run, temp_db, capsys):
+    """Test running only due topics."""
+    due_topic = store.add_topic("Due Topic")
+    fresh_topic = store.add_topic("Fresh Topic")
+    run_id = store.record_run(fresh_topic["id"], source_mode="v3", status="completed")
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute(
+        "UPDATE research_runs SET run_date = datetime('now') WHERE id = ?",
+        (run_id,),
+    )
+    conn.commit()
+    conn.close()
+    mock_run.return_value = {
+        "topic": "Due Topic",
+        "status": "completed",
+        "new": 1,
+        "updated": 0,
+        "duration": 1.0,
+    }
+
+    args = Mock()
+
+    watchlist.cmd_run_due(args)
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args[0][0]["id"] == due_topic["id"]
+    output = json.loads(capsys.readouterr().out)
+    assert output["action"] == "run_due"
+    assert output["ran"] == 1
+    assert output["results"][0]["topic"] == "Due Topic"
+
+
+@patch('watchlist._run_topic')
+def test_cmd_run_due_respects_budget(mock_run, temp_db, capsys):
+    """Test run-due skips work when the daily budget is already spent."""
+    store.add_topic("Due Topic")
+    store.set_setting("daily_budget", "0.00")
+
+    args = Mock()
+
+    watchlist.cmd_run_due(args)
+
+    mock_run.assert_not_called()
+    output = json.loads(capsys.readouterr().out)
+    assert output["ran"] == 0
+    assert output["results"][0]["status"] == "skipped"
+
+
 # === Tests for cmd_delta() ===
 
 def test_cmd_delta_outputs_topic_delta(temp_db, capsys):

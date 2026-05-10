@@ -298,6 +298,95 @@ def list_topics() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def get_due_topics(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Return enabled topics whose schedule is due.
+
+    Supports the cron shapes emitted by watchlist.py today:
+    daily (`M H * * *`) and weekly (`M H * * D`). Unsupported schedules are
+    skipped rather than guessed.
+    """
+    init_db()
+    now = now or datetime.now()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT t.*,
+                      r.id as last_run_id,
+                      r.run_date as last_run,
+                      r.status as last_status
+               FROM topics t
+               LEFT JOIN research_runs r ON r.id = (
+                   SELECT id FROM research_runs
+                   WHERE topic_id = t.id
+                   ORDER BY datetime(run_date) DESC, id DESC
+                   LIMIT 1
+               )
+               WHERE t.enabled = 1
+               ORDER BY t.name"""
+        ).fetchall()
+
+        due: List[Dict[str, Any]] = []
+        for row in rows:
+            topic = dict(row)
+            if topic.get("last_status") == "running":
+                continue
+            if not topic.get("last_run"):
+                topic["due_reason"] = "never_run"
+                due.append(topic)
+                continue
+            try:
+                scheduled_at = _last_scheduled_at(topic.get("schedule"), now)
+            except ValueError:
+                continue
+            last_run_at = _parse_sqlite_datetime(topic["last_run"])
+            if last_run_at < scheduled_at:
+                topic["due_reason"] = "scheduled"
+                topic["scheduled_at"] = scheduled_at.isoformat(sep=" ")
+                due.append(topic)
+        return due
+    finally:
+        conn.close()
+
+
+def _last_scheduled_at(schedule: Optional[str], now: datetime) -> datetime:
+    schedule = schedule or get_setting("default_schedule", "0 8 * * *")
+    parts = schedule.split()
+    if len(parts) != 5:
+        raise ValueError(f"Unsupported schedule: {schedule}")
+    minute_raw, hour_raw, day_raw, month_raw, weekday_raw = parts
+    if day_raw != "*" or month_raw != "*":
+        raise ValueError(f"Unsupported schedule: {schedule}")
+    minute = int(minute_raw)
+    hour = int(hour_raw)
+    if not (0 <= minute <= 59 and 0 <= hour <= 23):
+        raise ValueError(f"Unsupported schedule: {schedule}")
+
+    if weekday_raw == "*":
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate > now:
+            candidate -= timedelta(days=1)
+        return candidate
+
+    cron_weekday = int(weekday_raw)
+    if cron_weekday == 7:
+        cron_weekday = 0
+    if not (0 <= cron_weekday <= 6):
+        raise ValueError(f"Unsupported schedule: {schedule}")
+    # Cron uses 0/7=Sunday, 1=Monday. datetime.weekday() uses 0=Monday.
+    target_weekday = (cron_weekday - 1) % 7
+    days_since = (now.weekday() - target_weekday) % 7
+    candidate = (now - timedelta(days=days_since)).replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    if candidate > now:
+        candidate -= timedelta(days=7)
+    return candidate
+
+
+def _parse_sqlite_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+
+
 def get_topic(name: str) -> Optional[Dict[str, Any]]:
     """Get a topic by name."""
     init_db()

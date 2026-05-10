@@ -743,6 +743,93 @@ def test_list_topics(temp_db):
         assert "last_status" in topic
 
 
+# === Tests for due topic scheduling ===
+
+def test_get_due_topics_includes_never_run_topics(temp_db):
+    """Test that enabled topics without runs are due immediately."""
+    topic = store.add_topic("Never Run")
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert [item["id"] for item in due] == [topic["id"]]
+    assert due[0]["due_reason"] == "never_run"
+
+
+def test_get_due_topics_skips_disabled_topics(temp_db):
+    """Test that disabled topics are not returned as due."""
+    topic = store.add_topic("Disabled")
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute("UPDATE topics SET enabled = 0 WHERE id = ?", (topic["id"],))
+    conn.commit()
+    conn.close()
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert due == []
+
+
+def test_get_due_topics_uses_daily_schedule(temp_db):
+    """Test daily cron schedules become due after today's scheduled time."""
+    topic = store.add_topic("Daily", schedule="0 8 * * *")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute(
+        "UPDATE research_runs SET run_date = ? WHERE id = ?",
+        ("2026-05-10 08:30:00", run_id),
+    )
+    conn.commit()
+    conn.close()
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert [item["id"] for item in due] == [topic["id"]]
+    assert due[0]["due_reason"] == "scheduled"
+
+
+def test_get_due_topics_skips_topic_already_run_for_schedule(temp_db):
+    """Test daily topics are not due again after today's scheduled run."""
+    topic = store.add_topic("Daily", schedule="0 8 * * *")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute(
+        "UPDATE research_runs SET run_date = ? WHERE id = ?",
+        ("2026-05-11 08:30:00", run_id),
+    )
+    conn.commit()
+    conn.close()
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert due == []
+
+
+def test_get_due_topics_uses_weekly_schedule(temp_db):
+    """Test weekly cron schedules wait for the configured weekday."""
+    topic = store.add_topic("Weekly", schedule="0 8 * * 1")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute(
+        "UPDATE research_runs SET run_date = ? WHERE id = ?",
+        ("2026-05-04 08:30:00", run_id),
+    )
+    conn.commit()
+    conn.close()
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert [item["id"] for item in due] == [topic["id"]]
+
+
+def test_get_due_topics_skips_running_topics(temp_db):
+    """Test a running latest run prevents duplicate concurrent work."""
+    topic = store.add_topic("Running")
+    store.record_run(topic["id"], source_mode="v3", status="running")
+
+    due = store.get_due_topics(now=datetime(2026, 5, 11, 9, 0, 0))
+
+    assert due == []
+
+
 # === Tests for get_new_findings() ===
 
 def test_get_new_findings(temp_db, sample_report):
