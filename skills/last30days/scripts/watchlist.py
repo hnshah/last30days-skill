@@ -293,6 +293,55 @@ def _format_dossier_compact(dossier: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_handoff(args):
+    topic = store.get_topic(args.topic)
+    if not topic:
+        print(json.dumps({"error": f'Topic not found: "{args.topic}"'}))
+        sys.exit(1)
+    bundle = store.build_agent_handoff_bundle(
+        topic["id"],
+        agent=getattr(args, "agent", "generic"),
+    )
+    emit = getattr(args, "emit", "json")
+    if emit == "json":
+        print(json.dumps(bundle, default=str))
+        return
+    if emit in {"compact", "md"}:
+        print(_format_handoff_compact(bundle))
+        return
+    raise SystemExit(f"Unsupported handoff emit mode: {emit}")
+
+
+def _format_handoff_compact(bundle: dict) -> str:
+    delta = bundle.get("delta") or {}
+    escalation = bundle.get("escalation") or {}
+    lines = [
+        f"# Watchlist handoff: {bundle.get('topic', 'unknown')}",
+        "",
+        f"- Agent: {bundle.get('agent', 'generic')}",
+        f"- Escalation: {escalation.get('decision', 'quiet')} "
+        f"({escalation.get('score', 0.0)} / {escalation.get('threshold', 0.7)})",
+        f"- Delta: {delta.get('new', 0)} new, "
+        f"{delta.get('continued', 0)} continued, {delta.get('dropped', 0)} dropped",
+        "",
+        "## Task",
+        bundle.get("task", "Investigate this watchlist delta."),
+        "",
+        "## Context",
+    ]
+    for finding in (bundle.get("recent_findings") or [])[:10]:
+        title = finding.get("source_title") or finding.get("source_url") or "Untitled"
+        source = finding.get("source") or "unknown"
+        url = finding.get("source_url") or ""
+        lines.append(f"- [{source}] {title} — {url}".rstrip())
+
+    lines.extend(["", "## Requested outputs"])
+    for output in bundle.get("recommended_outputs") or []:
+        lines.append(f"- {output}")
+
+    return "\n".join(lines)
+
+
 def cmd_run_one(args):
     topic = store.get_topic(args.topic)
     if not topic:
@@ -446,6 +495,12 @@ def build_parser() -> argparse.ArgumentParser:
     dossier.add_argument("topic")
     dossier.add_argument("--emit", choices=["json", "compact", "md"], default="json")
     dossier.set_defaults(func=cmd_dossier)
+
+    handoff = sub.add_parser("handoff")
+    handoff.add_argument("topic")
+    handoff.add_argument("--agent", choices=["generic", "openclaw", "hermes"], default="generic")
+    handoff.add_argument("--emit", choices=["json", "compact", "md"], default="json")
+    handoff.set_defaults(func=cmd_handoff)
 
     run_one = sub.add_parser("run-one")
     run_one.add_argument("topic")

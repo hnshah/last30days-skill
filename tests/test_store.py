@@ -947,6 +947,44 @@ def test_build_topic_dossier_includes_escalation(temp_db):
     assert dossier["escalation"]["recommended_action"] == "review_delta"
 
 
+# === Tests for agent handoff bundles ===
+
+def test_build_agent_handoff_bundle(temp_db):
+    """Test building a portable agent handoff bundle from a dossier."""
+    topic = store.add_topic("Test Topic")
+    first_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(first_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/old",
+            "source_title": "Old",
+            "content": "Old item",
+        }
+    ])
+    second_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(second_run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New item",
+        },
+    ])
+
+    bundle = store.build_agent_handoff_bundle(topic["id"], agent="openclaw")
+
+    assert bundle["agent"] == "openclaw"
+    assert bundle["topic"] == "Test Topic"
+    assert bundle["task"].startswith("Investigate this watchlist delta")
+    assert bundle["delta"]["new"] == 1
+    assert bundle["escalation"]["decision"] in {"quiet", "escalate"}
+    assert bundle["recommended_outputs"] == [
+        "operator_brief",
+        "source_check",
+        "next_actions",
+    ]
+
+
 # === Tests for get_new_findings() ===
 
 def test_get_new_findings(temp_db, sample_report):

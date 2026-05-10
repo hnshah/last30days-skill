@@ -432,6 +432,71 @@ def test_cmd_dossier_compact_output_includes_escalation(temp_db, capsys):
     assert "- Recommended action: review_delta" in output
 
 
+# === Tests for cmd_handoff() ===
+
+def test_cmd_handoff_outputs_json_bundle(temp_db, capsys):
+    """Test printing an agent handoff bundle."""
+    topic = store.add_topic("Test Topic")
+    first_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(first_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/old",
+            "source_title": "Old",
+            "content": "Old item",
+        }
+    ])
+    second_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(second_run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New item",
+        },
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.agent = "openclaw"
+    args.emit = "json"
+
+    watchlist.cmd_handoff(args)
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["agent"] == "openclaw"
+    assert output["topic"] == "Test Topic"
+    assert "task" in output
+    assert output["delta"]["new"] == 1
+
+
+def test_cmd_handoff_compact_output(temp_db, capsys):
+    """Test printing a readable agent handoff bundle."""
+    topic = store.add_topic("Test Topic")
+    run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(run_id, topic["id"], [
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New item",
+        }
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+    args.agent = "hermes"
+    args.emit = "compact"
+
+    watchlist.cmd_handoff(args)
+
+    output = capsys.readouterr().out
+    assert "# Watchlist handoff: Test Topic" in output
+    assert "- Agent: hermes" in output
+    assert "## Task" in output
+    assert "## Context" in output
+
+
 # === Tests for cmd_config() ===
 
 def test_cmd_config_delivery(temp_db, capsys):
